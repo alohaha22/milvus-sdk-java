@@ -23,7 +23,10 @@
         <dependency>
             <groupId>io.milvus</groupId>
             <artifactId>milvus-sdk-java</artifactId>
-            <version>${revision}</version>
+            <!-- ride the released core: rebuilding sdk-core from this tag requires the
+                 matching milvus-proto submodule, and the bulkwriter changes here do not
+                 touch any core API -->
+            <version>3.0.6</version>
         </dependency>
         <dependency>
             <groupId>junit</groupId>

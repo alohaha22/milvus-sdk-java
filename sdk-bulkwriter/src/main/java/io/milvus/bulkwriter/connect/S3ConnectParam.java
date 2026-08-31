@@ -21,6 +21,7 @@ package io.milvus.bulkwriter.connect;
 
 import io.milvus.exception.ParamException;
 import io.milvus.param.ParamUtils;
+import io.minio.credentials.Provider;
 import okhttp3.OkHttpClient;
 import org.jetbrains.annotations.NotNull;
 
@@ -36,6 +37,7 @@ public class S3ConnectParam extends StorageConnectParam {
     private final String region;
     private final OkHttpClient httpClient;
     private final String cloudName;
+    private final Provider credentialsProvider;
 
     private S3ConnectParam(@NotNull Builder builder) {
         this.bucketName = builder.bucketName;
@@ -46,6 +48,7 @@ public class S3ConnectParam extends StorageConnectParam {
         this.region = builder.region;
         this.httpClient = builder.httpClient;
         this.cloudName = builder.cloudName;
+        this.credentialsProvider = builder.credentialsProvider;
     }
 
     public String getBucketName() {
@@ -80,6 +83,16 @@ public class S3ConnectParam extends StorageConnectParam {
         return cloudName;
     }
 
+    /**
+     * An external credentials provider that refreshes credentials automatically while
+     * the writer is running. When set, it takes precedence over the static
+     * accessKey/secretKey/sessionToken fields. For GCP the bearer token is carried in
+     * {@code Credentials.sessionToken()} (see GcpMetadataServerCredentialsProvider).
+     */
+    public Provider getCredentialsProvider() {
+        return credentialsProvider;
+    }
+
     @Override
     public String toString() {
         return "S3ConnectParam{" +
@@ -109,6 +122,7 @@ public class S3ConnectParam extends StorageConnectParam {
         private String region;
         private OkHttpClient httpClient;
         private String cloudName;
+        private Provider credentialsProvider;
 
         private Builder() {
         }
@@ -168,6 +182,17 @@ public class S3ConnectParam extends StorageConnectParam {
 
         public Builder withHttpClient(@NotNull OkHttpClient httpClient) {
             this.httpClient = httpClient;
+            return this;
+        }
+
+        /**
+         * Sets an external credentials provider. Use this for identity-based
+         * authentication that must refresh credentials while the writer is running
+         * (e.g. AWS web identity / IRSA, GCP workload identity). Mutually exclusive
+         * with the static accessKey/secretKey/sessionToken setters.
+         */
+        public Builder withCredentialsProvider(@NotNull Provider credentialsProvider) {
+            this.credentialsProvider = credentialsProvider;
             return this;
         }
 

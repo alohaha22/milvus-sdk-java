@@ -21,6 +21,7 @@ package io.milvus.bulkwriter.storage.client;
 
 import com.google.common.collect.Multimap;
 import io.milvus.bulkwriter.common.clientenum.CloudStorage;
+import io.milvus.bulkwriter.connect.S3ConnectParam;
 import io.milvus.bulkwriter.model.CompleteMultipartUploadOutputModel;
 import io.milvus.bulkwriter.storage.StorageClient;
 import io.milvus.exception.ParamException;
@@ -56,6 +57,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.util.function.Supplier;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
@@ -76,26 +78,28 @@ public class MinioStorageClient extends MinioAsyncClient implements StorageClien
         this.closeHttpClient = closeHttpClient;
     }
 
-    public static MinioStorageClient getStorageClient(String cloudName,
-                                                      String endpoint,
-                                                      String accessKey,
-                                                      String secretKey,
-                                                      String sessionToken,
-                                                      String region,
-                                                      OkHttpClient httpClient) {
-        boolean closeHttpClient = httpClient == null;
+    public static MinioStorageClient getStorageClient(S3ConnectParam connectParam) {
+        boolean closeHttpClient = connectParam.getHttpClient() == null;
         MinioAsyncClient.Builder minioClientBuilder = MinioAsyncClient.builder()
-                .endpoint(endpoint);
+                .endpoint(connectParam.getEndpoint());
 
-        if (CloudStorage.isGcpCloud(cloudName) && StringUtils.isNotEmpty(sessionToken)) {
-            httpClient = buildAuthorizedClient(httpClient, sessionToken);
+        OkHttpClient httpClient = connectParam.getHttpClient();
+        if (CloudStorage.isGcpCloud(connectParam.getCloudName())
+                && (connectParam.getCredentialsProvider() != null
+                || StringUtils.isNotEmpty(connectParam.getSessionToken()))) {
+            // the GCS XML API authenticates with a bearer header instead of signing; the
+            // bearer token rides in Credentials.sessionToken per the established convention
+            httpClient = buildAuthorizedClient(httpClient, gcpBearerTokenSource(connectParam));
         } else {
-            Provider credentialsProvider = new StaticProvider(accessKey, secretKey, sessionToken);
+            Provider credentialsProvider = connectParam.getCredentialsProvider() != null
+                    ? connectParam.getCredentialsProvider()
+                    : new StaticProvider(connectParam.getAccessKey(), connectParam.getSecretKey(),
+                    connectParam.getSessionToken());
             minioClientBuilder.credentialsProvider(credentialsProvider);
         }
 
-        if (StringUtils.isNotEmpty(region)) {
-            minioClientBuilder.region(region);
+        if (StringUtils.isNotEmpty(connectParam.getRegion())) {
+            minioClientBuilder.region(connectParam.getRegion());
         }
 
         if (httpClient != null) {
@@ -103,18 +107,49 @@ public class MinioStorageClient extends MinioAsyncClient implements StorageClien
         }
 
         MinioAsyncClient minioClient = minioClientBuilder.build();
-        if (CloudStorage.isTcCloud(cloudName)) {
+        if (CloudStorage.isTcCloud(connectParam.getCloudName())) {
             minioClient.enableVirtualStyleEndpoint();
         }
 
         return new MinioStorageClient(minioClient, closeHttpClient);
     }
 
-    private static OkHttpClient buildAuthorizedClient(OkHttpClient httpClient, String sessionToken) {
+    public static MinioStorageClient getStorageClient(String cloudName,
+                                                      String endpoint,
+                                                      String accessKey,
+                                                      String secretKey,
+                                                      String sessionToken,
+                                                      String region,
+                                                      OkHttpClient httpClient) {
+        S3ConnectParam.Builder builder = S3ConnectParam.newBuilder()
+                .withCloudName(cloudName)
+                .withEndpoint(endpoint)
+                .withAccessKey(accessKey)
+                .withSecretKey(secretKey)
+                .withRegion(region);
+        if (StringUtils.isNotEmpty(sessionToken)) {
+            builder.withSessionToken(sessionToken);
+        }
+        if (httpClient != null) {
+            builder.withHttpClient(httpClient);
+        }
+        return getStorageClient(builder.build());
+    }
+
+    private static Supplier<String> gcpBearerTokenSource(S3ConnectParam connectParam) {
+        Provider provider = connectParam.getCredentialsProvider();
+        if (provider != null) {
+            return () -> provider.fetch().sessionToken();
+        }
+        String staticToken = connectParam.getSessionToken();
+        return () -> staticToken;
+    }
+
+    private static OkHttpClient buildAuthorizedClient(OkHttpClient httpClient, Supplier<String> tokenSupplier) {
         Interceptor authInterceptor = chain -> {
             Request original = chain.request();
             Request requestWithAuth = original.newBuilder()
-                    .header("Authorization", "Bearer " + sessionToken)
+                    .header("Authorization", "Bearer " + tokenSupplier.get())
                     .build();
             return chain.proceed(requestWithAuth);
         };
@@ -129,6 +164,7 @@ public class MinioStorageClient extends MinioAsyncClient implements StorageClien
                     .build();
         }
     }
+
 
     public Long getObjectEntity(String bucketName, String objectKey) throws Exception {
         StatObjectArgs statObjectArgs = StatObjectArgs.builder()
