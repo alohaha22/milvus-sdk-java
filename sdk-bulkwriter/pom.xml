@@ -23,7 +23,9 @@
         <dependency>
             <groupId>io.milvus</groupId>
             <artifactId>milvus-sdk-java</artifactId>
-            <version>${revision}</version>
+            <!-- pinned to the released core so vts can consume this bulkwriter
+                 without bumping its milvus-sdk-java core dependency -->
+            <version>3.0.6</version>
         </dependency>
         <dependency>
             <groupId>junit</groupId>
